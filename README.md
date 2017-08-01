@@ -1,6 +1,6 @@
 # cookie_check
 
-Checking authentication Rails sessions through a C API via Rust. Does not verify the cookie before decoding it. Requires openssl.
+Checking authentication of Rails sessions through a C API, via safe Rust. Does not verify the signature of the cookie before decoding it. Does not panic back into C. Requires openssl.
 
 ## Parameters
 
