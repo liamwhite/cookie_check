@@ -5,6 +5,7 @@ Checking authentication of Rails sessions through a C API, via safe Rust. Does n
 ## Parameters
 
 secret: `Rails.application.config.secret_key_base`
+
 salt: `Rails.application.config.action_dispatch.encrypted_cookie_salt`
 
 ## Example usage
