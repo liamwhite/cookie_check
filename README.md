@@ -2,6 +2,8 @@
 
 Checking authentication of Rails sessions through a C API, via safe Rust. Does not verify the signature of the cookie before decoding it. Does not panic back into C. Requires openssl.
 
+**Don't use this (yet)! It doesn't check the signature of the session and is susceptible to a padding oracle.**
+
 ## Parameters
 
 secret: `Rails.application.config.secret_key_base`
