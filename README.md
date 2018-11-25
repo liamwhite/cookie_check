@@ -8,6 +8,8 @@ secret: `Rails.application.config.secret_key_base`
 
 salt: `Rails.application.config.action_dispatch.encrypted_cookie_salt`
 
+sign_salt: `Rails.application.config.action_dispatch.encrypted_signed_cookie_salt`
+
 ## Example usage
 
 ```c
