@@ -37,10 +37,8 @@ void c_derive_key(c_key_data *key);
 
 int main(int argc, char *argv[])
 {
-    struct timespec start, finish;
     c_key_data key;
     c_cookie_data cookie;
-    int val;
 
     key.secret    = argv[1];
     key.salt      = argv[2];
