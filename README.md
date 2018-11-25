@@ -26,7 +26,7 @@ typedef struct c_key_data {
     uint8_t *sign_salt;
     size_t  sign_saltlen;
     uint8_t key[32];
-    uint8_t sign_key[32];
+    uint8_t sign_key[64];
 } c_key_data;
 
 typedef struct c_cookie_data {
