@@ -15,7 +15,7 @@ mod types;
 use types::*;
 
 #[no_mangle]
-pub unsafe extern "C" fn c_request_authenticated(
+pub unsafe extern fn c_request_authenticated(
     key:    *const KeyData<'static>,
     cookie: *const CookieData<'static>
 ) -> bool {
@@ -23,7 +23,7 @@ pub unsafe extern "C" fn c_request_authenticated(
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn c_derive_key(key: *mut KeyData<'static>) -> () {
+pub unsafe extern fn c_derive_key(key: *mut KeyData<'static>) {
 	derive_key(&mut *key).unwrap_or(())
 }
 
