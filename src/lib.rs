@@ -48,7 +48,6 @@ fn determine<'a>(key: KeyData<'a>, cookie: &[u8]) -> Result<bool, Box<Error>> {
 fn decode_to_data_iv<'a>(key: &KeyData<'a>, cookie: &[u8]) -> Result<(Vec<u8>, Vec<u8>), Box<Error>> {
     let url_decoded = percent_decode(&cookie).decode_utf8()?;
 
-    // checking the signature is not important here so we just throw it out
     let parts: Vec<&str> = url_decoded.split("--").collect();
     if parts.len() != 2 {
         return Err("invalid cookie".into());
