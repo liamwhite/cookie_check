@@ -11,6 +11,7 @@ salt: `Rails.application.config.action_dispatch.encrypted_cookie_salt`
 ## Example usage
 
 ```c
+// gcc cookie_test.c -o cookie_test -L. -lcookie_check -lssl -lcrypto -ldl -lpthread
 #include <string.h>
 #include <stdio.h>
 #include <stdint.h>
