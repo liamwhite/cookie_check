@@ -10,7 +10,6 @@ use openssl::hash::MessageDigest;
 use openssl::pkey::PKey;
 use openssl::symm::Cipher;
 use openssl::sign::Signer;
-use openssl::memcmp;
 
 mod types;
 use types::*;
@@ -85,7 +84,11 @@ fn validate_hmac<'a>(key: &KeyData<'a>, parts: &Vec<&str>) -> Result<bool, Box<E
     let hmac_computed = signer.sign_to_vec()?;
     let hmac_known    = hex::decode(parts[1])?;
 
-    Ok(memcmp::eq(&hmac_computed, &hmac_known))
+    if hmac_computed.len() == hmac_known.len() {
+        Ok(openssl::memcmp::eq(&hmac_computed, &hmac_known))
+    } else {
+        Err("invalid cookie".into())
+    }
 }
 
 fn decrypt_session(key: &[u8], data: &Vec<u8>, iv: &Vec<u8>) -> Result<String, Box<Error>> {
