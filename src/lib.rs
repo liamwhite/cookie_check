@@ -16,28 +16,20 @@ use types::*;
 
 #[no_mangle]
 pub unsafe extern "C" fn c_request_authenticated(
-    key:    *mut   c_key_data,
-    cookie: *const c_cookie_data
-) -> bool
-{
-    std::panic::catch_unwind(|| {
-        let ref_key    = key_data_from_c(key);
-        let ref_cookie = cookie_data_from_c(cookie);
-
-        determine(ref_key, ref_cookie.cookie).unwrap_or(false)
-    }).unwrap_or(false)
+    key:    *const KeyData<'static>,
+    cookie: *const CookieData<'static>
+) -> bool {
+    determine(&*key, (*cookie).cookie).unwrap_or(false)
 }
 
 #[no_mangle]
-pub unsafe extern "C" fn c_derive_key(key: *mut c_key_data) -> () {
-    std::panic::catch_unwind(|| {
-        derive_key(key_data_from_c(key)).unwrap_or(())
-    }).unwrap_or(())
+pub unsafe extern "C" fn c_derive_key(key: *mut KeyData<'static>) -> () {
+	derive_key(&mut *key).unwrap_or(())
 }
 
 // ---
 
-fn determine<'a>(key: KeyData<'a>, cookie: &[u8]) -> Result<bool, Box<Error>> {
+fn determine<'a>(key: &KeyData<'a>, cookie: &[u8]) -> Result<bool, Box<Error>> {
     let decoded    = decode_to_data_iv(&key, &cookie)?;
     let decrypted  = decrypt_session(&key.key, &decoded.0, &decoded.1)?;
     let determined = user_authenticated(decrypted.as_str())?;
@@ -69,14 +61,14 @@ fn decode_to_data_iv<'a>(key: &KeyData<'a>, cookie: &[u8]) -> Result<(Vec<u8>, V
     Ok((data, iv))
 }
 
-fn derive_key<'a>(key: KeyData<'a>) -> Result<(), Box<Error>> {
-    openssl::pkcs5::pbkdf2_hmac(key.secret, key.salt, 1000, MessageDigest::sha1(), &mut key.key[..])?;
-    openssl::pkcs5::pbkdf2_hmac(key.secret, key.sign_salt, 1000, MessageDigest::sha1(), &mut key.sign_key[..])?;
+fn derive_key<'a>(key: &mut KeyData<'a>) -> Result<(), Box<Error>> {
+    openssl::pkcs5::pbkdf2_hmac(key.secret, key.salt, 1000, MessageDigest::sha1(), &mut key.key)?;
+    openssl::pkcs5::pbkdf2_hmac(key.secret, key.sign_salt, 1000, MessageDigest::sha1(), &mut key.sign_key)?;
     Ok(())
 }
 
 fn validate_hmac<'a>(key: &KeyData<'a>, parts: &Vec<&str>) -> Result<bool, Box<Error>> {
-    let pkey = PKey::hmac(key.key)?;
+    let pkey = PKey::hmac(&key.sign_key)?;
     let mut signer = Signer::new(MessageDigest::sha1(), &pkey)?;
     signer.update(parts[0].as_bytes())?;
 

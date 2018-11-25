@@ -13,5 +13,10 @@ hex = "0.3"
 [lib]
 crate-type = ["staticlib"]
 
+[profile.dev]
+panic = "abort"
+
 [profile.release]
 lto = true
+# opt-level = "z"
+panic = "abort"
