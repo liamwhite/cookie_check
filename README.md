@@ -1,8 +1,6 @@
 # cookie_check
 
-Checking authentication of Rails sessions through a C API, via safe Rust. Does not verify the signature of the cookie before decoding it. Does not panic back into C. Requires openssl.
-
-**Don't use this (yet)! It doesn't check the signature of the session and is susceptible to a padding oracle.**
+Checking authentication of Rails sessions through a C API, via safe Rust. Verifies the signature of the cookie before decoding it. Does not panic back into C. Requires openssl.
 
 ## Parameters
 
@@ -13,41 +11,51 @@ salt: `Rails.application.config.action_dispatch.encrypted_cookie_salt`
 ## Example usage
 
 ```c
-#include <stdio.h>
 #include <string.h>
+#include <stdio.h>
+#include <stdint.h>
 
-int c_request_authenticated(
-    const char *key,
-    size_t keylen,
-    const char *cookie,
-    size_t cookielen
-);
+typedef struct c_key_data {
+    uint8_t *secret;
+    size_t  secretlen;
+    uint8_t *salt;
+    size_t  saltlen;
+    uint8_t *sign_salt;
+    size_t  sign_saltlen;
+    uint8_t key[32];
+    uint8_t sign_key[32];
+} c_key_data;
 
-void c_derive_key(
-    const char *secret,
-    size_t secretlen,
-    const char *salt,
-    size_t saltlen,
-    char /*mut*/ key[32],
-    size_t keylen
-);
+typedef struct c_cookie_data {
+    uint8_t *cookie;
+    size_t  cookielen;
+} c_cookie_data;
+
+int c_request_authenticated(c_key_data *key, c_cookie_data const *cookie);
+void c_derive_key(c_key_data *key);
 
 int main(int argc, char *argv[])
 {
-    const char *secret = argv[1];
-    size_t secretlen = strlen(secret);
+    struct timespec start, finish;
+    c_key_data key;
+    c_cookie_data cookie;
+    int val;
 
-    const char *salt = argv[2];
-    size_t saltlen = strlen(salt);
+    key.secret    = argv[1];
+    key.salt      = argv[2];
+    key.sign_salt = argv[3];
 
-    const char *cookie = argv[3];
-    size_t cookielen = strlen(cookie);
+    key.secretlen    = strlen(key.secret);
+    key.saltlen      = strlen(key.salt);
+    key.sign_saltlen = strlen(key.sign_salt);
 
-    char key[32] = { 0 };
-    c_derive_key(secret, secretlen, salt, saltlen, key, 32);
+    cookie.cookie = argv[4];
+    cookie.cookielen = strlen(cookie.cookie);
 
-    int val = c_request_authenticated(key, 32, cookie, cookielen);
-    printf("Authenticated? %s\n", val ? "yes" : "no");
+    if (c_request_authenticated(&key, &cookie))
+        puts("Authenticated");
+    else
+        puts("Not authenticated");
 
     return 0;
 }
@@ -55,4 +63,4 @@ int main(int argc, char *argv[])
 
 ## Performance
 
-Checking takes on average 0.00331ms.
+Checking takes on average 0.00497ms.
