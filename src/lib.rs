@@ -18,13 +18,13 @@ use types::*;
 pub unsafe extern fn c_request_authenticated(
     key:    *const KeyData<'static>,
     cookie: *const CookieData<'static>
-) -> bool {
-    determine(&*key, (*cookie).cookie).unwrap_or(false)
+) -> i32 {
+    determine(&*key, (*cookie).cookie).unwrap_or(false) as i32
 }
 
 #[no_mangle]
 pub unsafe extern fn c_derive_key(key: *mut KeyData<'static>) {
-	derive_key(&mut *key).unwrap_or(())
+    derive_key(&mut *key).unwrap_or(())
 }
 
 // ---
