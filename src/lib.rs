@@ -1,15 +1,15 @@
 extern crate base64;
+extern crate chrono;
+extern crate hex;
 extern crate openssl;
 extern crate percent_encoding;
 extern crate serde_json;
-extern crate hex;
 
 use std::error::Error;
 use percent_encoding::percent_decode;
 use openssl::hash::MessageDigest;
-use openssl::pkey::PKey;
 use openssl::symm::Cipher;
-use openssl::sign::Signer;
+use chrono::prelude::*;
 
 mod types;
 use types::*;
@@ -30,63 +30,55 @@ pub unsafe extern fn c_derive_key(key: *mut KeyData<'static>) {
 // ---
 
 fn determine<'a>(key: &KeyData<'a>, cookie: &[u8]) -> Result<bool, Box<Error>> {
-    let decoded    = decode_to_data_iv(&key, &cookie)?;
-    let decrypted  = decrypt_session(&key.key, &decoded.0, &decoded.1)?;
+    let decoded    = decode_cookie(&cookie)?;
+    let decrypted  = decrypt_session(&key.key, &decoded.0, &decoded.1, &decoded.2)?;
     let determined = user_authenticated(decrypted.as_str())?;
 
     Ok(determined)
 }
 
-fn decode_to_data_iv<'a>(key: &KeyData<'a>, cookie: &[u8]) -> Result<(Vec<u8>, Vec<u8>), Box<Error>> {
+fn decode_cookie<'a>(cookie: &[u8]) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), Box<Error>> {
     let url_decoded = percent_decode(&cookie).decode_utf8()?;
 
     let parts: Vec<&str> = url_decoded.split("--").collect();
-    if parts.len() != 2 {
+    if parts.len() != 3 {
         return Err("invalid cookie".into());
     }
 
-    if !validate_hmac(&key, &parts)? {
-        return Err("invalid cookie".into());
-    }
+    let data     = base64::decode(parts[0])?;
+    let iv       = base64::decode(parts[1])?;
+    let auth_tag = base64::decode(parts[2])?;
 
-    let encrypted_blob = String::from_utf8(base64::decode(parts[0])?)?;
-    let encrypted_parts: Vec<&str> = encrypted_blob.split("--").collect();
-    if encrypted_parts.len() != 2 {
-        return Err("invalid cookie".into());
-    }
-
-    let data = base64::decode(encrypted_parts[0])?;
-    let iv   = base64::decode(encrypted_parts[1])?;
-
-    Ok((data, iv))
+    Ok((data, iv, auth_tag))
 }
 
 fn derive_key<'a>(key: &mut KeyData<'a>) -> Result<(), Box<Error>> {
     openssl::pkcs5::pbkdf2_hmac(key.secret, key.salt, 1000, MessageDigest::sha1(), &mut key.key)?;
-    openssl::pkcs5::pbkdf2_hmac(key.secret, key.sign_salt, 1000, MessageDigest::sha1(), &mut key.sign_key)?;
     Ok(())
 }
 
-fn validate_hmac<'a>(key: &KeyData<'a>, parts: &Vec<&str>) -> Result<bool, Box<Error>> {
-    let pkey = PKey::hmac(&key.sign_key)?;
-    let mut signer = Signer::new(MessageDigest::sha1(), &pkey)?;
-    signer.update(parts[0].as_bytes())?;
-
-    let hmac_computed = signer.sign_to_vec()?;
-    let hmac_known    = hex::decode(parts[1])?;
-
-    if hmac_computed.len() == hmac_known.len() {
-        Ok(openssl::memcmp::eq(&hmac_computed, &hmac_known))
-    } else {
-        Err("invalid cookie".into())
-    }
-}
-
-fn decrypt_session(key: &[u8], data: &Vec<u8>, iv: &Vec<u8>) -> Result<String, Box<Error>> {
-    Ok(String::from_utf8(openssl::symm::decrypt(Cipher::aes_256_cbc(), &key, Some(&iv), &data)?)?)
+fn decrypt_session(key: &[u8], data: &Vec<u8>, iv: &Vec<u8>, auth_tag: &Vec<u8>) -> Result<String, Box<Error>> {
+    Ok(String::from_utf8(openssl::symm::decrypt_aead(Cipher::aes_256_gcm(), &key, Some(&iv), &[], &data, &auth_tag)?)?)
 }
 
 fn user_authenticated(data: &str) -> Result<bool, Box<Error>> {
-    let v: serde_json::Value = serde_json::from_str(data)?;
-    Ok(v.pointer("/warden.user.user.key/0/0").is_some())
+    let v_outer: serde_json::Value = serde_json::from_str(data)?;
+
+    let (message, expiry) = match (v_outer.pointer("/_rails/message"), v_outer.pointer("/_rails/pur"), v_outer.pointer("/_rails/exp")) {
+        (Some(serde_json::Value::String(message)), Some(serde_json::Value::Null), Some(serde_json::Value::String(expiry))) =>
+            (message, expiry),
+        _ =>
+            return Err("invalid cookie".into())
+    };
+
+    let utc_expiry = DateTime::parse_from_rfc3339(expiry)?;
+    if utc_expiry.with_timezone(&Utc) <= Utc::now() {
+        return Err("invalid cookie".into());
+    }
+
+    let raw_message = base64::decode(message)?;
+    let str_message = std::str::from_utf8(&raw_message)?;
+    let v_inner: serde_json::Value = serde_json::from_str(str_message)?;
+
+    Ok(v_inner.pointer("/warden.user.user.key/0/0").is_some())
 }
