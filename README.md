@@ -59,4 +59,4 @@ int main(int argc, char *argv[])
 
 ## Performance
 
-Checking takes on average 0.00497ms on an Intel i7-4790K CPU. This average checking time represents the best-case performance scenario, where `c_request_authenticated` is called repeatedly in a tight loop, and data and instruction caches are filled. Performance in real workloads will likely vary.
+Checking takes on average 0.00582ms on an Intel i7-4790K CPU. This average checking time represents the best-case performance scenario, where `c_request_authenticated` is called repeatedly in a tight loop, and data and instruction caches are filled. Performance in real workloads will likely vary.
