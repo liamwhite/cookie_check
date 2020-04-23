@@ -71,11 +71,7 @@ This library is thread safe, and throughput should scale linearly with the core 
 
 Performing 1 million tests of a valid, medium-sized session (363 bytes) on an i7-4790K CPU takes approximately 2.12 seconds, corresponding to an average check rate of 472,000 checks per second, or an average check time of 0.00212 milliseconds (2 microseconds).
 
-Performing 1 million tests of an invalid, medium-sized session (362 bytes) where the Phoenix AAD was tampered with takes approximately 0.008s, corresponding to an average check rate of 125,000,000 checks per second, or an average check time of 0.000008 milliseconds (8 nanoseconds).
-
-Performing 1 million tests of an invalid, medium-sized session (362 bytes) where the CEK was tampered with takes approximately 0.012s, corresponding to an average check rate of 83,333,333 checks per second, or an average check time of 0.000012 milliseconds (12 nanoseconds).
-
-Performing 1 million tests of an invalid, medium-sized session (362 bytes) where the session data was tampered with also takes approximately 0.012s, corresponding to an average check rate of 83,333,333 checks per second, or an average check time of 0.000012 milliseconds (12 nanoseconds).
+Performing 1 million tests of an invalid, medium-sized session (362 bytes) where the length of any given field was tampered with takes approximately 0.008s, corresponding to an average check rate of 125,000,000 checks per second, or an average check time of 0.000008 milliseconds (8 nanoseconds).
 
 These benchmark times are acceptable for the author of this library.
 
