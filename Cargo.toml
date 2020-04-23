@@ -1,15 +1,11 @@
 [package]
 name = "cookie_check"
-version = "0.1.1"
+version = "1.0.0"
 authors = ["Liam P. White <byteslice@airmail.cc>"]
 
 [dependencies]
-base64 = "0.10"
+base64 = "0.12"
 openssl = "0.10"
-percent-encoding = "1.0"
-serde_json = "1.0"
-hex = "0.3"
-chrono = "0.4"
 
 [lib]
 crate-type = ["cdylib"]

@@ -1,18 +1,15 @@
 extern crate base64;
-extern crate chrono;
-extern crate hex;
 extern crate openssl;
-extern crate percent_encoding;
-extern crate serde_json;
 
 use std::error::Error;
-use percent_encoding::percent_decode;
+use std::str;
 use openssl::hash::MessageDigest;
 use openssl::symm::Cipher;
-use chrono::prelude::*;
 
 mod types;
 use types::*;
+
+const PHOENIX_AAD: [u8; 7] = *b"A128GCM";
 
 #[no_mangle]
 pub unsafe extern fn c_request_authenticated(
@@ -29,56 +26,59 @@ pub unsafe extern fn c_derive_key(key: *mut KeyData<'static>) {
 
 // ---
 
-fn determine<'a>(key: &KeyData<'a>, cookie: &[u8]) -> Result<bool, Box<Error>> {
+fn determine<'a>(key: &KeyData<'a>, cookie: &[u8]) -> Result<bool, Box<dyn Error>> {
     let decoded    = decode_cookie(&cookie)?;
-    let decrypted  = decrypt_session(&key.key, &decoded.0, &decoded.1, &decoded.2)?;
-    let determined = user_authenticated(decrypted.as_str())?;
+    let cek        = unwrap_cek(&key, &decoded.1)?;
+    let decrypted  = decrypt_session(&cek, &decoded.0, &decoded.2, &decoded.3, &decoded.4)?;
+    let determined = session_important(&decrypted);
 
     Ok(determined)
 }
 
-fn decode_cookie<'a>(cookie: &[u8]) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>), Box<Error>> {
-    let url_decoded = percent_decode(&cookie).decode_utf8()?;
+fn decode_cookie<'a>(cookie: &[u8]) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>), Box<dyn Error>> {
+    let decoded = str::from_utf8(cookie)?;
+    let parts: Vec<&str> = decoded.split(".").collect();
 
-    let parts: Vec<&str> = url_decoded.split("--").collect();
-    if parts.len() != 3 {
+    if parts.len() != 5 {
         return Err("invalid cookie".into());
     }
 
-    let data     = base64::decode(parts[0])?;
-    let iv       = base64::decode(parts[1])?;
-    let auth_tag = base64::decode(parts[2])?;
+    let aad      = base64::decode_config(parts[0], base64::URL_SAFE_NO_PAD)?;
+    let cek      = base64::decode_config(parts[1], base64::URL_SAFE_NO_PAD)?;
+    let iv       = base64::decode_config(parts[2], base64::URL_SAFE_NO_PAD)?;
+    let data     = base64::decode_config(parts[3], base64::URL_SAFE_NO_PAD)?;
+    let auth_tag = base64::decode_config(parts[4], base64::URL_SAFE_NO_PAD)?;
 
-    Ok((data, iv, auth_tag))
+    if !aad.eq(&PHOENIX_AAD) || cek.len() != 44 || iv.len() != 12 || auth_tag.len() != 16 {
+        return Err("invalid cookie".into())
+    }
+
+    Ok((aad, cek, iv, data, auth_tag))
 }
 
-fn derive_key<'a>(key: &mut KeyData<'a>) -> Result<(), Box<Error>> {
-    openssl::pkcs5::pbkdf2_hmac(key.secret, key.salt, 1000, MessageDigest::sha1(), &mut key.key)?;
+fn derive_key<'a>(key: &mut KeyData<'a>) -> Result<(), Box<dyn Error>> {
+    openssl::pkcs5::pbkdf2_hmac(key.secret, key.salt, 1000, MessageDigest::sha256(), &mut key.key)?;
+    openssl::pkcs5::pbkdf2_hmac(key.secret, key.sign_salt, 1000, MessageDigest::sha256(), &mut key.sign_key)?;
+
     Ok(())
 }
 
-fn decrypt_session(key: &[u8], data: &Vec<u8>, iv: &Vec<u8>, auth_tag: &Vec<u8>) -> Result<String, Box<Error>> {
-    Ok(String::from_utf8(openssl::symm::decrypt_aead(Cipher::aes_256_gcm(), &key, Some(&iv), &[], &data, &auth_tag)?)?)
+fn unwrap_cek<'a>(key: &KeyData<'a>, wrapped_cek: &Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>> {
+    let cipher_text = &wrapped_cek[0..16];   // 128 bit data
+    let cipher_tag  = &wrapped_cek[16..32];  // 128 bit AEAD tag
+    let iv          = &wrapped_cek[32..44];  // 96 bit IV
+
+    Ok(openssl::symm::decrypt_aead(Cipher::aes_256_gcm(), &key.key, Some(iv), &key.sign_key, cipher_text, cipher_tag)?)
 }
 
-fn user_authenticated(data: &str) -> Result<bool, Box<Error>> {
-    let v_outer: serde_json::Value = serde_json::from_str(data)?;
+fn decrypt_session(cek: &Vec<u8>, aad: &Vec<u8>, iv: &Vec<u8>, data: &Vec<u8>, auth_tag: &Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>> {
+    Ok(openssl::symm::decrypt_aead(Cipher::aes_128_gcm(), &cek, Some(&iv), &aad, &data, &auth_tag)?)
+}
 
-    let (message, expiry) = match (v_outer.pointer("/_rails/message"), v_outer.pointer("/_rails/pur"), v_outer.pointer("/_rails/exp")) {
-        (Some(serde_json::Value::String(message)), Some(serde_json::Value::Null), Some(serde_json::Value::String(expiry))) =>
-            (message, expiry),
-        _ =>
-            return Err("invalid cookie".into())
-    };
+fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    haystack.windows(needle.len()).position(|window| window == needle)
+}
 
-    let utc_expiry = DateTime::parse_from_rfc3339(expiry)?;
-    if utc_expiry.with_timezone(&Utc) <= Utc::now() {
-        return Err("invalid cookie".into());
-    }
-
-    let raw_message = base64::decode(message)?;
-    let str_message = std::str::from_utf8(&raw_message)?;
-    let v_inner: serde_json::Value = serde_json::from_str(str_message)?;
-
-    Ok(v_inner.pointer("/warden.user.user.key/0/0").is_some())
+fn session_important(session_data: &Vec<u8>) -> bool {
+    find_subsequence(session_data, b"_auth").is_some() || find_subsequence(session_data, b"flash").is_some()
 }
