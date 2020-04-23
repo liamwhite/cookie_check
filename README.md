@@ -10,7 +10,7 @@ salt      = plug Plug.Session, encryption_salt: ... # your encryption salt (ofte
 sign_salt = plug Plug.Session, signing_salt: ... # your signing salt (often "signed cookie")
 ```
 
-## Example usage
+## C example usage
 
 ```c
 // gcc cookie_test.c -o cookie_test -L. -lcookie_check -lssl -lcrypto -ldl -lpthread
@@ -62,6 +62,107 @@ int main(int argc, char *argv[])
         puts("Not authenticated");
 
     return 0;
+}
+```
+
+## OpenResty example usage
+
+Requires the [`resty.cookie`](https://github.com/cloudflare/lua-resty-cookie) module.
+
+```nginx
+upstream example_upstream {
+  server localhost:8080 fail_timeout=0;
+}
+
+proxy_cache_path /var/lib/nginx/proxy_cache levels=1:2 keys_zone=example_cache:8m max_size=100m inactive=1m;
+
+init_by_lua_block {
+  ck = require("resty.cookie")
+  ffi = require("ffi")
+
+  ffi.cdef [[
+  typedef struct c_key_data {
+      const uint8_t *secret;
+      size_t secretlen;
+      const uint8_t *salt;
+      size_t saltlen;
+      const uint8_t *sign_salt;
+      size_t sign_saltlen;
+      uint8_t key[32];
+      uint8_t sign_key[32];
+  } c_key_data;
+
+  typedef struct c_cookie_data {
+      const uint8_t *cookie;
+      size_t cookielen;
+  } c_cookie_data;
+
+  int c_request_authenticated(c_key_data const *key, c_cookie_data const *cookie);
+  void c_derive_key(c_key_data *key);
+  ]]
+
+  ccheck = ffi.load("/srv/cookie_check/target/release/libcookie_check.so")
+  keydata = ffi.new("struct c_key_data", {
+    secret       = "9V1RE6tqbwve1g+AiYZPmyw9OLyT4R7wBf2XjvDzA1YEhoZJBb989pcu8TT8TNj",
+    secretlen    = 63,
+    salt         = "signed encrypted cookie",
+    saltlen      = 23,
+    sign_salt    = "signed cookie"
+    sign_saltlen = 13
+  })
+
+  ccheck.c_derive_key(keydata)
+}
+
+server {
+  listen 80 default;
+
+  location / {
+    set $target "@proxy_cache";
+
+    rewrite_by_lua_block {
+      if string.lower(ngx.req.get_method()) ~= "get" then
+        ngx.var.target = "@proxy"
+        return
+      end    
+
+      local cookie, err = ck:new()
+      if not cookie then
+        return
+      end
+
+      local session, err = cookie:get("_my_app_web_key")
+      if not session then
+        return
+      end
+
+      local cookiedata = ffi.new("struct c_cookie_data", {
+        cookie    = session,
+        cookielen = string.len(session)
+      })
+
+      if ccheck.c_request_authenticated(keydata, cookiedata) ~= 0 then
+        ngx.var.target = "@proxy"
+      end
+    }
+
+    try_files $uri $target;
+  }
+
+  location @proxy {
+    proxy_pass http://example_upstream;
+    proxy_redirect off;
+  }
+
+  location @proxy_cache {
+    proxy_cache example_cache;
+    proxy_ignore_headers X-Accel-Expires Expires Cache-Control Cookie Set-Cookie;
+    proxy_cache_valid any 1m;
+    proxy_pass  http://example_upstream;
+    proxy_set_header   Cookie           '';
+    proxy_set_header   Set-Cookie       '';
+    proxy_hide_header  Cache-Control;
+  }
 }
 ```
 
