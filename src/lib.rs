@@ -80,5 +80,5 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 fn session_important(session_data: &Vec<u8>) -> bool {
-    find_subsequence(session_data, b"_auth").is_some() || find_subsequence(session_data, b"flash").is_some()
+    find_subsequence(session_data, b"user_token").is_some() || find_subsequence(session_data, b"flash").is_some()
 }
