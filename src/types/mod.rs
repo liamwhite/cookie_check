@@ -11,3 +11,8 @@ pub struct KeyData<'a> {
 pub struct CookieData<'a> {
     pub cookie: &'a [u8]
 }
+
+#[repr(C)]
+pub struct IpData<'a> {
+    pub ip: &'a [u8]
+}

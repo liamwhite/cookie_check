@@ -34,7 +34,13 @@ typedef struct c_cookie_data {
     size_t cookielen;
 } c_cookie_data;
 
+typedef struct c_ip_data {
+    const uint8_t *ip;
+    size_t iplen;
+} c_ip_data;
+
 int c_request_authenticated(c_key_data const *key, c_cookie_data const *cookie);
+int c_ip_authenticated(c_key_data const *key, c_cookie_data const *cookie, c_ip_data const *ip);
 void c_derive_key(c_key_data *key);
 
 int main(int argc, char *argv[])
@@ -97,7 +103,13 @@ init_by_lua_block {
       size_t cookielen;
   } c_cookie_data;
 
+  typedef struct c_ip_data {
+      const uint8_t *ip;
+      size_t iplen;
+  } c_ip_data;
+
   int c_request_authenticated(c_key_data const *key, c_cookie_data const *cookie);
+  int c_ip_authenticated(c_key_data const *key, c_cookie_data const *cookie, c_ip_data const *ip);
   void c_derive_key(c_key_data *key);
   ]]
 
@@ -141,7 +153,12 @@ server {
         cookielen = string.len(session)
       })
 
-      if ccheck.c_request_authenticated(keydata, cookiedata) ~= 0 then
+      local ipdata = ffi.new("struct c_ip_data", {
+        ip    = ngx.var.remote_ip,
+        iplen = string.len(ngx.var.remote_ip)
+      })
+
+      if ccheck.c_ip_authenticated(keydata, cookiedata, ipdata) ~= 0 then
         ngx.var.target = "@proxy"
       end
     }

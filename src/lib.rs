@@ -20,6 +20,15 @@ pub unsafe extern fn c_request_authenticated(
 }
 
 #[no_mangle]
+pub unsafe extern fn c_ip_authenticated(
+    key:    *const KeyData<'static>,
+    cookie: *const CookieData<'static>,
+    ip:     *const IpData<'static>
+) -> i32 {
+    determine_ip(&*key, (*cookie).cookie, (*ip).ip).unwrap_or(false) as i32
+}
+
+#[no_mangle]
 pub unsafe extern fn c_derive_key(key: *mut KeyData<'static>) {
     derive_key(&mut *key).unwrap_or(())
 }
@@ -31,6 +40,16 @@ fn determine<'a>(key: &KeyData<'a>, cookie: &[u8]) -> Result<bool, Box<dyn Error
     let cek        = unwrap_cek(&key, &decoded.1)?;
     let decrypted  = decrypt_session(&cek, &decoded.0, &decoded.2, &decoded.3, &decoded.4)?;
     let determined = session_important(&decrypted);
+
+    Ok(determined)
+}
+
+fn determine_ip<'a>(key: &KeyData<'a>, cookie: &[u8], ip: &[u8]) -> Result<bool, Box<dyn Error>> {
+    let decoded    = decode_cookie(&cookie)?;
+    let cek        = unwrap_cek(&key, &decoded.1)?;
+    let decrypted  = decrypt_session(&cek, &decoded.0, &decoded.2, &decoded.3, &decoded.4)?;
+    let important  = session_important(&decrypted);
+    let determined = important && contains_ip(&decrypted, ip);
 
     Ok(determined)
 }
@@ -80,5 +99,9 @@ fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 }
 
 fn session_important(session_data: &Vec<u8>) -> bool {
-    find_subsequence(session_data, b"user_token").is_some() || find_subsequence(session_data, b"flash").is_some()
+    find_subsequence(session_data, b"user_token").is_some()
+}
+
+fn contains_ip(session_data: &Vec<u8>, ip: &[u8]) -> bool {
+    find_subsequence(session_data, ip).is_some()
 }
