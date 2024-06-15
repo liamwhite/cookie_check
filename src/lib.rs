@@ -3,99 +3,116 @@ extern crate openssl;
 
 use std::error::Error;
 use std::str;
-use openssl::hash::MessageDigest;
-use openssl::symm::Cipher;
 
 mod types;
+mod xchacha;
+use openssl::hash::MessageDigest;
+use openssl::symm::Cipher;
 use types::*;
+use xchacha::xchacha20;
 
 const PHOENIX_AAD: [u8; 7] = *b"A128GCM";
+const PLUG_CRYPTO: &'static str = "XCP";
 
 #[no_mangle]
-pub unsafe extern fn c_request_authenticated(
-    key:    *const KeyData<'static>,
-    cookie: *const CookieData<'static>
+pub unsafe extern "C" fn c_request_authenticated(
+    key: *const KeyData<'static>,
+    cookie: *const CookieData<'static>,
 ) -> i32 {
     determine(&*key, (*cookie).cookie).unwrap_or(false) as i32
 }
 
 #[no_mangle]
-pub unsafe extern fn c_ip_authenticated(
-    key:    *const KeyData<'static>,
+pub unsafe extern "C" fn c_ip_authenticated(
+    key: *const KeyData<'static>,
     cookie: *const CookieData<'static>,
-    ip:     *const IpData<'static>
+    ip: *const IpData<'static>,
 ) -> i32 {
     determine_ip(&*key, (*cookie).cookie, (*ip).ip).unwrap_or(false) as i32
 }
 
 #[no_mangle]
-pub unsafe extern fn c_derive_key(key: *mut KeyData<'static>) {
+pub unsafe extern "C" fn c_derive_key(key: *mut KeyData<'static>) {
     derive_key(&mut *key).unwrap_or(())
 }
 
 // ---
 
 fn determine<'a>(key: &KeyData<'a>, cookie: &[u8]) -> Result<bool, Box<dyn Error>> {
-    let decoded    = decode_cookie(&cookie)?;
-    let cek        = unwrap_cek(&key, &decoded.1)?;
-    let decrypted  = decrypt_session(&cek, &decoded.0, &decoded.2, &decoded.3, &decoded.4)?;
+    let decoded = decode_cookie(&cookie)?;
+    let decrypted = decrypt_session(decoded, &PHOENIX_AAD, &key.key)?;
     let determined = session_important(&decrypted);
 
     Ok(determined)
 }
 
 fn determine_ip<'a>(key: &KeyData<'a>, cookie: &[u8], ip: &[u8]) -> Result<bool, Box<dyn Error>> {
-    let decoded    = decode_cookie(&cookie)?;
-    let cek        = unwrap_cek(&key, &decoded.1)?;
-    let decrypted  = decrypt_session(&cek, &decoded.0, &decoded.2, &decoded.3, &decoded.4)?;
-    let important  = session_important(&decrypted);
+    let decoded = decode_cookie(&cookie)?;
+    let decrypted = decrypt_session(decoded, &PHOENIX_AAD, &key.key)?;
+    let important = session_important(&decrypted);
     let determined = important && contains_ip(&decrypted, ip);
 
     Ok(determined)
 }
 
-fn decode_cookie<'a>(cookie: &[u8]) -> Result<(Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>, Vec<u8>), Box<dyn Error>> {
+fn decode_cookie(cookie: &[u8]) -> Result<Vec<u8>, Box<dyn Error>> {
     let decoded = str::from_utf8(cookie)?;
     let parts: Vec<&str> = decoded.split(".").collect();
 
-    if parts.len() != 5 {
+    if parts.len() != 2 || !parts[0].eq(PLUG_CRYPTO) {
         return Err("invalid cookie".into());
     }
 
-    let aad      = base64::decode_config(parts[0], base64::URL_SAFE_NO_PAD)?;
-    let cek      = base64::decode_config(parts[1], base64::URL_SAFE_NO_PAD)?;
-    let iv       = base64::decode_config(parts[2], base64::URL_SAFE_NO_PAD)?;
-    let data     = base64::decode_config(parts[3], base64::URL_SAFE_NO_PAD)?;
-    let auth_tag = base64::decode_config(parts[4], base64::URL_SAFE_NO_PAD)?;
+    Ok(base64::decode_config(parts[1], base64::URL_SAFE_NO_PAD)?)
+}
 
-    if !aad.eq(&PHOENIX_AAD) || cek.len() != 44 || iv.len() != 12 || auth_tag.len() != 16 {
-        return Err("invalid cookie".into())
+fn decrypt_session(
+    iv_cipher_tag_cipher_text: Vec<u8>,
+    aad: &[u8],
+    secret: &[u8; 32],
+) -> Result<Vec<u8>, Box<dyn Error>> {
+    if iv_cipher_tag_cipher_text.len() < 40 {
+        return Err("invalid cipher part".into());
     }
 
-    Ok((aad, cek, iv, data, auth_tag))
+    let iv = &iv_cipher_tag_cipher_text[0..24];
+    let cipher_tag = &iv_cipher_tag_cipher_text[24..40];
+    let cipher_text = &iv_cipher_tag_cipher_text[40..];
+    let (subkey, nonce) = xchacha20(secret, iv);
+
+    Ok(openssl::symm::decrypt_aead(
+        Cipher::chacha20_poly1305(),
+        &subkey,
+        Some(&nonce),
+        aad,
+        cipher_text,
+        cipher_tag,
+    )?)
 }
 
 fn derive_key<'a>(key: &mut KeyData<'a>) -> Result<(), Box<dyn Error>> {
-    openssl::pkcs5::pbkdf2_hmac(key.secret, key.salt, 1000, MessageDigest::sha256(), &mut key.key)?;
-    openssl::pkcs5::pbkdf2_hmac(key.secret, key.sign_salt, 1000, MessageDigest::sha256(), &mut key.sign_key)?;
+    openssl::pkcs5::pbkdf2_hmac(
+        key.secret,
+        key.salt,
+        1000,
+        MessageDigest::sha256(),
+        &mut key.key,
+    )?;
+    openssl::pkcs5::pbkdf2_hmac(
+        key.secret,
+        key.sign_salt,
+        1000,
+        MessageDigest::sha256(),
+        &mut key.sign_key,
+    )?;
 
     Ok(())
 }
 
-fn unwrap_cek<'a>(key: &KeyData<'a>, wrapped_cek: &Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>> {
-    let cipher_text = &wrapped_cek[0..16];   // 128 bit data
-    let cipher_tag  = &wrapped_cek[16..32];  // 128 bit AEAD tag
-    let iv          = &wrapped_cek[32..44];  // 96 bit IV
-
-    Ok(openssl::symm::decrypt_aead(Cipher::aes_256_gcm(), &key.key, Some(iv), &key.sign_key, cipher_text, cipher_tag)?)
-}
-
-fn decrypt_session(cek: &Vec<u8>, aad: &Vec<u8>, iv: &Vec<u8>, data: &Vec<u8>, auth_tag: &Vec<u8>) -> Result<Vec<u8>, Box<dyn Error>> {
-    Ok(openssl::symm::decrypt_aead(Cipher::aes_128_gcm(), &cek, Some(&iv), &aad, &data, &auth_tag)?)
-}
-
 fn find_subsequence(haystack: &[u8], needle: &[u8]) -> Option<usize> {
-    haystack.windows(needle.len()).position(|window| window == needle)
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
 }
 
 fn session_important(session_data: &Vec<u8>) -> bool {
