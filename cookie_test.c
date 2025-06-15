@@ -38,8 +38,8 @@ int main(int argc, char *argv[])
     c_cookie_data cookie;
 
     // Example secret, generated with `mix phx.gen.secret`
-    key.secret       = "WdKlFbaMpXN8S5O1KpRWQfMu8VgfV4i8ojNqqR6vOkFDSyAKTb9ckFJ0pDAb9vwa";
-    key.salt         = "signed encrypted cookie";
+    key.secret       = "xZYTon09JNRrj8snd7KL31wya4x71jmo5aaSSRmw1dGjWLRmEwWMTccwxgsGFGjM";
+    key.salt         = "authenticated encrypted cookie";
     key.sign_salt    = "signed cookie";
 
     key.secretlen    = strlen(key.secret);

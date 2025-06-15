@@ -1,6 +1,6 @@
 # cookie_check
 
-Checking "importantness" of encrypted Phoenix 1.7 cookie sessions through a C API, via safe Rust. Does not panic back into C. Requires openssl.
+Checking "importantness" of encrypted Phoenix 1.7 cookie sessions through a C API, via safe Rust. Does not panic back into C.
 
 ## Parameters
 
@@ -79,7 +79,7 @@ server {
       if string.lower(ngx.req.get_method()) ~= "get" then
         ngx.var.target = "@proxy"
         return
-      end    
+      end
 
       local cookie, err = ck:new()
       if not cookie then
