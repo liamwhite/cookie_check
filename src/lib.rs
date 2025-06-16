@@ -14,6 +14,7 @@ use xchacha::xchacha20;
 
 const PHOENIX_AAD: [u8; 7] = *b"A128GCM";
 const PLUG_CRYPTO: &'static str = "XCP";
+const KEY_ITERATIONS: NonZeroU32 = NonZeroU32::new(1000).unwrap();
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn c_request_authenticated(
@@ -101,11 +102,9 @@ fn decrypt_session(
 }
 
 fn derive_key<'a>(key: &mut KeyData<'a>) -> Result<(), Box<dyn Error>> {
-    let iterations = NonZeroU32::new(1000).unwrap();
-
     pbkdf2::derive(
         pbkdf2::PBKDF2_HMAC_SHA256,
-        iterations,
+        KEY_ITERATIONS,
         key.salt,
         key.secret,
         &mut key.key,
@@ -113,7 +112,7 @@ fn derive_key<'a>(key: &mut KeyData<'a>) -> Result<(), Box<dyn Error>> {
 
     pbkdf2::derive(
         pbkdf2::PBKDF2_HMAC_SHA256,
-        iterations,
+        KEY_ITERATIONS,
         key.sign_salt,
         key.secret,
         &mut key.sign_key,
