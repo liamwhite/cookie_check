@@ -2,13 +2,14 @@
 name = "cookie_check"
 version = "1.0.0"
 authors = ["Liam P. White <byteslice@airmail.cc>"]
+edition = "2024"
 
 [dependencies]
 base64 = "0.12"
-openssl = "0.10"
+ring = "0.17.14"
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["staticlib"]
 
 [profile.dev]
 panic = "abort"

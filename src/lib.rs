@@ -1,39 +1,41 @@
 extern crate base64;
-extern crate openssl;
+extern crate ring;
 
+use std::convert::TryInto;
 use std::error::Error;
 use std::str;
 
 mod types;
 mod xchacha;
-use openssl::hash::MessageDigest;
-use openssl::symm::Cipher;
+use ring::{aead, pbkdf2};
+use std::num::NonZeroU32;
 use types::*;
 use xchacha::xchacha20;
 
 const PHOENIX_AAD: [u8; 7] = *b"A128GCM";
 const PLUG_CRYPTO: &'static str = "XCP";
+const KEY_ITERATIONS: NonZeroU32 = NonZeroU32::new(1000).unwrap();
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn c_request_authenticated(
     key: *const KeyData<'static>,
     cookie: *const CookieData<'static>,
 ) -> i32 {
-    determine(&*key, (*cookie).cookie).unwrap_or(false) as i32
+    unsafe { determine(&*key, (*cookie).cookie).unwrap_or(false) as i32 }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn c_ip_authenticated(
     key: *const KeyData<'static>,
     cookie: *const CookieData<'static>,
     ip: *const IpData<'static>,
 ) -> i32 {
-    determine_ip(&*key, (*cookie).cookie, (*ip).ip).unwrap_or(false) as i32
+    unsafe { determine_ip(&*key, (*cookie).cookie, (*ip).ip).unwrap_or(false) as i32 }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn c_derive_key(key: *mut KeyData<'static>) {
-    derive_key(&mut *key).unwrap_or(())
+    unsafe { derive_key(&mut *key).unwrap_or(()) }
 }
 
 // ---
@@ -79,32 +81,42 @@ fn decrypt_session(
     let cipher_tag = &iv_cipher_tag_cipher_text[24..40];
     let cipher_text = &iv_cipher_tag_cipher_text[40..];
     let (subkey, nonce) = xchacha20(secret, iv);
+    let unbound_key =
+        aead::UnboundKey::new(&aead::CHACHA20_POLY1305, &subkey).map_err(|_| "invalid key")?;
+    let less_safe_key = aead::LessSafeKey::new(unbound_key);
+    let nonce = aead::Nonce::assume_unique_for_key(nonce);
 
-    Ok(openssl::symm::decrypt_aead(
-        Cipher::chacha20_poly1305(),
-        &subkey,
-        Some(&nonce),
-        aad,
-        cipher_text,
-        cipher_tag,
-    )?)
+    let mut in_out = cipher_text.to_vec();
+
+    less_safe_key
+        .open_in_place_separate_tag(
+            nonce,
+            aead::Aad::from(aad),
+            cipher_tag.try_into().unwrap(),
+            &mut in_out,
+            0..,
+        )
+        .map_err(|_| "decryption failed")?;
+
+    Ok(in_out)
 }
 
 fn derive_key<'a>(key: &mut KeyData<'a>) -> Result<(), Box<dyn Error>> {
-    openssl::pkcs5::pbkdf2_hmac(
-        key.secret,
+    pbkdf2::derive(
+        pbkdf2::PBKDF2_HMAC_SHA256,
+        KEY_ITERATIONS,
         key.salt,
-        1000,
-        MessageDigest::sha256(),
-        &mut key.key,
-    )?;
-    openssl::pkcs5::pbkdf2_hmac(
         key.secret,
+        &mut key.key,
+    );
+
+    pbkdf2::derive(
+        pbkdf2::PBKDF2_HMAC_SHA256,
+        KEY_ITERATIONS,
         key.sign_salt,
-        1000,
-        MessageDigest::sha256(),
+        key.secret,
         &mut key.sign_key,
-    )?;
+    );
 
     Ok(())
 }
